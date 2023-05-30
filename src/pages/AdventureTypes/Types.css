@@ -1,0 +1,166 @@
+/* .Types {
+    background: linear-gradient(270deg, black, transparent), url('../../assets/skydivebg.png') no-repeat center center;
+    background-size: cover;
+    color: white;
+    padding: 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.desc{
+    font-size: 20px;
+}
+.desc ul{
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+} */
+@import url('https://fonts.googleapis.com/css2?family=Permanent+Marker&display=swap');
+
+.AdventureTypes {
+    font-family: 'Poppins', sans-serif;
+    font-size: 4rem;
+    min-height: 100vh;
+    position: relative;
+    top: 0;
+    background-image: linear-gradient(176deg, black, transparent), url(../../assets/types.jpg);
+    color: white;
+    padding: 4rem 1rem;
+    background-attachment: fixed;
+    background-repeat: repeat;
+    background-size: cover;
+}
+
+/* .adventures {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+}
+
+.cards {
+    width: 80vw;
+    height: 350px;
+    background-color: white;
+    display: flex;
+    flex-direction: row;
+}
+
+.left {
+    width: 50%;
+}
+
+.right {
+    width: 50%;
+}
+
+.left video {
+    width: 40vw;
+    height: 350px;
+    object-fit: cover;
+}
+ */
+.title {
+    color: #78006e;
+    font-weight: 650;
+    font-size: 33px;
+    text-align: center;
+    padding: 1rem;
+}
+
+.subtitle {
+    color: #210002;
+    font: 600;
+    font-size: 21px;
+    text-align: center;
+}
+
+/*
+.subtitle {
+
+    color: #210002;
+    font: 600;
+    font-size: 21px;
+    text-align: center;
+}
+
+.dest {
+    padding: 3rem 0 0 3rem;
+}
+
+.know-more {
+    margin: 3rem 0 0 3rem;
+    background-color: #78006e;
+    padding: 0.7rem 1rem;
+    border-radius: 1rem;
+    color: wheat;
+    font-size: 21px;
+} */
+.know-more {
+    margin: 3rem 0 0 3rem;
+    background-color: #78006e;
+    padding: 1rem 1rem;
+    border-radius: 1rem;
+    color: white;
+    font-size: 21px;
+    border: none;
+}
+
+.heading {
+    font-size: 3rem;
+    /* color: aquamarine; */
+    font-weight: 700;
+    text-shadow: 14 8 white;
+    text-transform: uppercase;
+    font-family: 'Permanent Marker', cursive;
+    background: #A300A3;
+    background: linear-gradient(to right, #A300A3 0%, #CF1512 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.card {
+    height: 373px;
+    background: white;
+    display: flex;
+}
+
+.video-container {
+    height: 100%;
+}
+
+.video-container video {
+    height: 100%;
+    object-fit: cover;
+    width: 40vw;
+}
+
+.ad-desc {
+    display: flex;
+    flex-direction: column;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 2rem;
+    width: -webkit-fill-available;
+}
+
+.ad-cards {
+    padding: 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+}
+
+.altc {
+    flex-direction: row-reverse;
+}
+
+.card img {
+    margin-left: -0.5rem;
+}
+
+.altc img {
+    margin-right: -1rem;
+    z-index: 1;
+}
