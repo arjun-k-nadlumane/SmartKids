@@ -1,0 +1,667 @@
+from fastapi import FastAPI, HTTPException, status, UploadFile, File, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+ 
+from os import getenv
+from dotenv import load_dotenv
+from typing import List
+from . import schemas
+import json
+from urllib.parse import urljoin, urlparse
+ 
+from base64 import b64decode
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import unpad
+ 
+from azure.storage.blob.aio import BlobServiceClient
+from azure.core.exceptions import ResourceExistsError
+from azure.core.credentials import AzureKeyCredential
+from azure.search.documents.indexes import SearchIndexerClient
+from azure.search.documents.indexes.models import (
+    SearchIndexerDataContainer,
+    SearchIndexerDataSourceConnection
+)
+from azure.search.documents.indexes import SearchIndexClient
+from azure.search.documents.indexes.models import (
+    SearchField,
+    SearchFieldDataType,
+    VectorSearch,
+    HnswAlgorithmConfiguration,
+    HnswParameters,
+    VectorSearchAlgorithmMetric,
+    ExhaustiveKnnAlgorithmConfiguration,
+    ExhaustiveKnnParameters,
+    VectorSearchProfile,
+    AzureOpenAIVectorizer,
+    AzureOpenAIParameters,
+    SemanticConfiguration,
+    SemanticSearch,
+    SemanticPrioritizedFields,
+    SemanticField,
+    SearchIndex
+)
+from azure.search.documents.indexes.models import (
+    SplitSkill,
+    InputFieldMappingEntry,
+    OutputFieldMappingEntry,
+    AzureOpenAIEmbeddingSkill,
+    SearchIndexerIndexProjections,
+    SearchIndexerIndexProjectionSelector,
+    SearchIndexerIndexProjectionsParameters,
+    IndexProjectionMode,
+    SearchIndexerSkillset
+)
+from azure.search.documents.indexes.models import (
+    SearchIndexer,
+    FieldMapping
+)
+ 
+from azure.identity import ManagedIdentityCredential
+from azure.keyvault.secrets import SecretClient
+from typing import Optional
+from pydantic import BaseModel
+import logging
+ 
+logging.basicConfig(level=logging.DEBUG)
+ 
+load_dotenv()
+ 
+app = FastAPI()
+resources = {}
+ 
+allowed_origins = [
+    "http://localhost:3000",
+    "https://hey-bosch-va-admin.vercel.app"
+]
+ 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+ 
+ 
+secret_key = getenv('SECRET_KEY')
+IV = getenv('IV')
+ 
+ 
+def decrypt(data: str) -> str:
+    ciphertext = b64decode(data)
+    derived_key = b64decode(secret_key)
+    cipher = AES.new(derived_key, AES.MODE_CBC, IV.encode('utf-8'))
+    decrypted_data = cipher.decrypt(ciphertext)
+    return unpad(decrypted_data, 16).decode("utf-8")
+ 
+ 
+# Reject the requests from unsecured origins
+ 
+@app.middleware("http")
+async def check_origin(request: Request, call_next):
+    origin = request.headers.get("origin")
+    if origin not in allowed_origins:
+        return Response("Unauthorized origin", status_code=403)
+    response = await call_next(request)
+    return response
+ 
+ 
+# Disable the swagger of FastAPI
+@app.get("/docs", include_in_schema=False)
+async def disable_docs():
+    return Response(content="Swagger documentation is disabled.", status_code=404)
+ 
+ 
+@app.get('/', tags=["Root"])
+async def root():
+    return "HI"
+ 
+ 
+from typing import Optional
+from pydantic import BaseModel
+ 
+# Extend the existing schema to include manual configuration fields as well as vault based.
+# class ConfigureRequest(BaseModel):
+#     STORAGE_ACCOUNT_NAME: str
+#     STORAGE_ACCOUNT_KEY: str
+#     AZURE_OPENAI_API: str
+#     AZURE_OPENAI_ENDPOINT: str
+#     TEXT_EMBEDDING_MODEL_DEPLOYMENT_NAME: str
+#     AZURE_AI_SEARCH_ENDPOINT: str
+#     AZURE_AI_SEARCH_API_KEY: str
+ 
+ 
+ 
+ 
+ 
+# @app.post('/api/configure')
+# async def configure(request: Request, data: ConfigureRequest):
+#     """
+#     Configure resources for a client. Supports both manual configuration and configuration via Vault URL.
+#     """
+#     print("hi")
+#     if 'X-Client' not in request.headers:
+#         raise HTTPException(
+#             status_code=status.HTTP_400_BAD_REQUEST, detail="X-Client header is missing"
+#         )
+ 
+#     x_client = request.headers['X-Client']
+ 
+#     # Validate configuration mode
+#     if data.vault_url:
+#         # Vault-based configuration
+#         try:
+#             # Authenticate to Key Vault
+#             credential = ManagedIdentityCredential()
+#             secret_client = SecretClient(vault_url=data.vault_url, credential=credential)
+ 
+#             # Fetch secrets from Key Vault
+#             storage_account_name = secret_client.get_secret("STORAGE_ACCOUNT_NAME").value
+#             storage_account_key = secret_client.get_secret("STORAGE_ACCOUNT_KEY").value
+#             azure_openai_api = secret_client.get_secret("AZURE_OPENAI_API").value
+#             azure_openai_endpoint = secret_client.get_secret("AZURE_OPENAI_ENDPOINT").value
+#             text_embedding_model_name = secret_client.get_secret("TEXT_EMBEDDING_MODEL_DEPLOYMENT_NAME").value
+#             azure_ai_search_endpoint = secret_client.get_secret("AZURE_AI_SEARCH_ENDPOINT").value
+#             azure_ai_search_api_key = secret_client.get_secret("AZURE_AI_SEARCH_API_KEY").value
+ 
+#         except Exception as e:
+#             raise HTTPException(
+#                 status_code=status.HTTP_400_BAD_REQUEST, detail=f"Vault configuration failed: {str(e)}"
+#             )
+#     else:
+#         # Manual configuration
+#         if not all([
+#             data.storage_account_name,
+#             data.storage_account_key,
+#             data.azure_openai_api,
+#             data.azure_openai_endpoint,
+#             data.text_embedding_model_name,
+#             data.azure_ai_search_endpoint,
+#             data.azure_ai_search_api_key
+#         ]):
+#             raise HTTPException(
+#                 status_code=status.HTTP_400_BAD_REQUEST,
+#                 detail="Missing required fields for manual configuration"
+#             )
+ 
+#         # Assign manual configuration values
+#         storage_account_name = data.storage_account_name
+#         storage_account_key = data.storage_account_key
+#         azure_openai_api = data.azure_openai_api
+#         azure_openai_endpoint = data.azure_openai_endpoint
+#         text_embedding_model_name = data.text_embedding_model_name
+#         azure_ai_search_endpoint = data.azure_ai_search_endpoint
+#         azure_ai_search_api_key = data.azure_ai_search_api_key
+ 
+#     # Construct the connection string and store configuration
+#     connection_string = f"DefaultEndpointsProtocol=https;AccountName={storage_account_name};AccountKey={storage_account_key}"
+ 
+#     resources[x_client] = {
+#         "STORAGE_ACCOUNT_NAME": storage_account_name,
+#         "STORAGE_ACCOUNT_KEY": storage_account_key,
+#         "AZURE_OPENAI_API": azure_openai_api,
+#         "AZURE_OPENAI_ENDPOINT": azure_openai_endpoint,
+#         "TEXT_EMBEDDING_MODEL_DEPLOYMENT_NAME": text_embedding_model_name,
+#         "AZURE_AI_SEARCH_ENDPOINT": azure_ai_search_endpoint,
+#         "AZURE_AI_SEARCH_API_KEY": azure_ai_search_api_key,
+#         "CONNECTION_STRING": connection_string,
+#         "AZURE_AI_SEARCH_CREDENTIAL": AzureKeyCredential(azure_ai_search_api_key),
+#         "configured": True
+#     }
+   
+ 
+#     return {
+#         "configured": True,
+#         "message": "Configuration successful",
+#         "mode": "vault" if data.vault_url else "manual"
+#     }
+ 
+ 
+ 
+ 
+# Define the request body schema
+class ConfigureRequest(BaseModel):
+    storage_account_name: str
+    storage_account_key: str
+    azure_openai_api: str
+    azure_openai_endpoint: str
+    text_embedding_model_name: str
+    azure_ai_search_endpoint: str
+    azure_ai_search_api_key: str
+ 
+@app.post('/api/manual-configuration')
+async def manual_configuration(request: Request, data: ConfigureRequest):
+    print("Raw Request Body:", await request.body())  # Print the raw request body
+    print(f"Received request on /api/manual-configuration with data: {data}")
+    """
+    Endpoint for manual configuration of resources.
+    """
+    if 'X-Client' not in request.headers:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="X-Client header is missing"
+        )
+ 
+    x_client = request.headers['X-Client']
+ 
+    # Ensure all manual configuration fields are provided
+    if not all([
+        data.storage_account_name,
+        data.storage_account_key,
+        data.azure_openai_api,
+        data.azure_openai_endpoint,
+        data.text_embedding_model_name,
+        data.azure_ai_search_endpoint,
+        data.azure_ai_search_api_key
+    ]):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing required fields for manual configuration"
+        )
+ 
+    # Construct the connection string and store configuration
+    connection_string = (
+        f"DefaultEndpointsProtocol=https;AccountName={data.storage_account_name};"
+        f"AccountKey={data.storage_account_key}"
+    )
+ 
+    resources[x_client] = {
+        "STORAGE_ACCOUNT_NAME": data.storage_account_name,
+        "STORAGE_ACCOUNT_KEY": data.storage_account_key,
+        "AZURE_OPENAI_API": data.azure_openai_api,
+        "AZURE_OPENAI_ENDPOINT": data.azure_openai_endpoint,
+        "TEXT_EMBEDDING_MODEL_DEPLOYMENT_NAME": data.text_embedding_model_name,
+        "AZURE_AI_SEARCH_ENDPOINT": data.azure_ai_search_endpoint,
+        "AZURE_AI_SEARCH_API_KEY": data.azure_ai_search_api_key,
+        "CONNECTION_STRING": connection_string,
+        "AZURE_AI_SEARCH_CREDENTIAL": data.azure_ai_search_api_key,
+        "configured": True,
+    }
+ 
+    return {"configured": True, "message": "Manual configuration successful"}
+ 
+ 
+@app.post('/api/vault-configuration')
+async def vault_configuration(request: Request, data: ConfigureRequest):
+    """
+    Endpoint for configuration via Azure Key Vault.
+    """
+    if 'X-Client' not in request.headers:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="X-Client header is missing"
+        )
+ 
+    x_client = request.headers['X-Client']
+ 
+    if not data.vault_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Vault URL is required"
+        )
+ 
+    try:
+        # Authenticate to Key Vault
+        credential = ManagedIdentityCredential()
+        secret_client = SecretClient(vault_url=data.vault_url, credential=credential)
+ 
+        # Fetch secrets from Key Vault
+        storage_account_name = secret_client.get_secret("STORAGE_ACCOUNT_NAME").value
+        storage_account_key = secret_client.get_secret("STORAGE_ACCOUNT_KEY").value
+        azure_openai_api = secret_client.get_secret("AZURE_OPENAI_API").value
+        azure_openai_endpoint = secret_client.get_secret("AZURE_OPENAI_ENDPOINT").value
+        text_embedding_model_name = secret_client.get_secret("TEXT_EMBEDDING_MODEL_DEPLOYMENT_NAME").value
+        azure_ai_search_endpoint = secret_client.get_secret("AZURE_AI_SEARCH_ENDPOINT").value
+        azure_ai_search_api_key = secret_client.get_secret("AZURE_AI_SEARCH_API_KEY").value
+ 
+        # Construct the connection string and store configuration
+        connection_string = (
+            f"DefaultEndpointsProtocol=https;AccountName={storage_account_name};"
+            f"AccountKey={storage_account_key}"
+        )
+ 
+        resources[x_client] = {
+            "STORAGE_ACCOUNT_NAME": storage_account_name,
+            "STORAGE_ACCOUNT_KEY": storage_account_key,
+            "AZURE_OPENAI_API": azure_openai_api,
+            "AZURE_OPENAI_ENDPOINT": azure_openai_endpoint,
+            "TEXT_EMBEDDING_MODEL_DEPLOYMENT_NAME": text_embedding_model_name,
+            "AZURE_AI_SEARCH_ENDPOINT": azure_ai_search_endpoint,
+            "AZURE_AI_SEARCH_API_KEY": azure_ai_search_api_key,
+            "CONNECTION_STRING": connection_string,
+            "AZURE_AI_SEARCH_CREDENTIAL": AzureKeyCredential(azure_ai_search_api_key),
+            "configured": True,
+        }
+ 
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Vault configuration failed: {str(e)}"
+        )
+ 
+    return {"configured": True, "message": "Vault configuration successful"}
+ 
+from azure.core.exceptions import ResourceNotFoundError, ResourceExistsError
+ 
+@app.post('/api/upload-files')
+async def upload(request: Request, files: List[UploadFile] = File(...)):
+ 
+    # Check for 'X-Client' header
+    if 'X-Client' not in request.headers:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="X-Client header missing")
+ 
+    x_client = request.headers['X-Client']
+ 
+    # Ensure x_client exists in resources
+    if x_client not in resources:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Missing configuration for the client")
+ 
+    # Check if container_name is specified in resources
+    if 'container_name' not in resources[x_client] or not resources[x_client]['container_name']:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Container name not specified")
+ 
+    # Check if files are provided
+    if not files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="No files selected")
+ 
+    try:
+        # Initialize BlobServiceClient using the connection string
+        blob_service_client = BlobServiceClient.from_connection_string(
+            conn_str=resources[x_client]['CONNECTION_STRING'])
+ 
+        # Get or create the container
+        container_name = resources[x_client]['container_name']
+        container_client = blob_service_client.get_container_client(container_name)
+ 
+        try:
+            # Attempt to get container properties to check if it exists
+            await container_client.get_container_properties()
+        except ResourceNotFoundError:
+            # If the container does not exist, create it
+            try:
+                await container_client.create_container()
+            except ResourceExistsError:
+                pass  # Ignore if the container is created concurrently by another process
+ 
+        # Upload each file
+        for file in files:
+            blob_client = container_client.get_blob_client(blob=file.filename)
+            # Upload the file to the blob storage
+            await blob_client.upload_blob(data=file.file, overwrite=True)
+ 
+        return {
+            "uploaded": True,
+            "message": f"Files successfully uploaded to {container_name}"
+        }
+ 
+    except Exception as e:
+        # Handle and log unexpected errors
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Files upload failed: {str(e)}")
+ 
+ 
+@app.get('/api/get-containers')
+async def get_containers(request: Request):
+    if 'X-Client' not in request.headers:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="X-Client header missing")
+ 
+    x_client = request.headers['X-Client']
+ 
+    if not resources[x_client]['configured']:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="No configuration found")
+ 
+    blob_service_client = BlobServiceClient.from_connection_string(
+        conn_str=resources[x_client]['CONNECTION_STRING'])
+ 
+    async with blob_service_client:
+        all_containers = []
+        async for container in blob_service_client.list_containers(include_metadata=True):
+            all_containers.append(container)
+ 
+        container_names = [container.name for container in all_containers]
+ 
+    return {
+        "containers": container_names
+    }
+ 
+@app.post('/api/check-container-name')
+async def check(data: schemas.ContainerName, request: Request):
+    if 'X-Client' not in request.headers:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="X-Client header missing")
+ 
+    if not data.container_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Please provide container name!")
+ 
+    x_client = request.headers['X-Client']
+ 
+    if x_client not in resources:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Missing configuration!")
+ 
+    blob_service_client = BlobServiceClient.from_connection_string(
+        conn_str=resources[x_client]['CONNECTION_STRING'])
+ 
+    container_list = []
+ 
+    async for container in blob_service_client.list_containers(include_metadata=True):
+        container_list.append(container)
+ 
+    container_names = [container.name for container in container_list]
+ 
+    if data.container_name in container_names:
+        return {"available": False, "message": "Not available"}
+ 
+    if data.container_name not in container_names:
+        resources[x_client]['container_name'] = data.container_name
+        return {"available": True, "message": f"{resources[x_client]['container_name']} is available"}
+ 
+ 
+@app.post('/api/create-file-index')
+async def createwithfiles(request: Request, data: schemas.Index):
+    # Log headers to check the presence of the 'X-Client' header
+    print(f"Request headers: {request.headers}")
+    
+    # Check for 'X-Client' header in request
+    if 'X-Client' not in request.headers:
+        print("Error: X-Client header missing")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="X-Client header missing"
+        )
+
+    x_client = request.headers['X-Client']
+    print(f"X-Client: {x_client}")
+
+    # Check if the resource for the client is configured
+    if x_client not in resources or not resources[x_client].get('configured', False):
+        print(f"Error: No configuration found for client {x_client}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="No configuration found")
+
+    # Validate container_name
+    if not isinstance(data.container_name, str) or not data.container_name.strip():
+        print("Error: Container name must be a valid string")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Container name must be a valid string")
+
+    # Validate index_name
+    if not isinstance(data.index_name, str) or not data.index_name.strip():
+        print("Error: Index name must be a valid string")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Index name must be a valid string")
+
+    try:
+        # Azure resource credentials
+        storage_account_name = resources[x_client]['STORAGE_ACCOUNT_NAME']
+        storage_account_key = resources[x_client]['STORAGE_ACCOUNT_KEY']
+        storage_container_name = data.container_name
+        connect_str = resources[x_client]['CONNECTION_STRING']
+        azure_openai_api_key = resources[x_client]['AZURE_OPENAI_API']
+        azure_openai_api_base = resources[x_client]['AZURE_OPENAI_ENDPOINT']
+        model = resources[x_client]['TEXT_EMBEDDING_MODEL_DEPLOYMENT_NAME']
+
+        vector_store_address = resources[x_client]['AZURE_AI_SEARCH_ENDPOINT']
+        vector_store_password = resources[x_client]['AZURE_AI_SEARCH_CREDENTIAL']
+
+        # Log and validate keys explicitly
+        print(f"Validating keys and configuration values...")
+        print(f"AZURE_AI_SEARCH_CREDENTIAL: {vector_store_password}")
+
+        # Validate if keys are strings
+        if not isinstance(storage_account_key, str) or not storage_account_key.strip():
+            raise ValueError("STORAGE_ACCOUNT_KEY must be a valid non-empty string")
+        
+        if not isinstance(azure_openai_api_key, str) or not azure_openai_api_key.strip():
+            raise ValueError("AZURE_OPENAI_API key must be a valid non-empty string")
+        
+        # Directly use the key (as a string) to validate
+        azure_search_key = resources[x_client]['AZURE_AI_SEARCH_CREDENTIAL']  # This should be a string
+        if not isinstance(azure_search_key, str) or not azure_search_key.strip():
+            raise ValueError("AZURE_AI_SEARCH_CREDENTIAL must be a valid non-empty string")
+
+        print(f"AZURE_AI_SEARCH_CREDENTIAL: {azure_search_key}")
+
+
+        # Validate connection and data source setup
+        if not isinstance(connect_str, str) or not connect_str.strip():
+            raise ValueError(f"Invalid connection string: {connect_str}")
+
+        # Azure Credential Setup
+        AZURE_COGNITIVE_SEARCH_CREDENTIAL = AzureKeyCredential(vector_store_password)
+        index_name = data.index_name
+        print(f"Index name: {index_name}")
+
+        # Check if the values passed are strings
+        assert isinstance(index_name, str), f"index_name is not a string: {index_name}"
+
+        # Data source setup
+        print(f"Setting up data source with connection string: {connect_str}...")
+        indexer_client = SearchIndexerClient(vector_store_address, credential=AZURE_COGNITIVE_SEARCH_CREDENTIAL)
+        container = SearchIndexerDataContainer(name=storage_container_name)
+        data_source_connection = SearchIndexerDataSourceConnection(
+            name=f"{index_name}-blob",  # Ensure the name is a valid string
+            type="azureblob",
+            connection_string=connect_str,
+            container=container
+        )
+
+        # Validate that the name is a string before proceeding
+        if not isinstance(data_source_connection.name, str):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Data source connection name must be a string")
+        
+        indexer_client.create_or_update_data_source_connection(data_source_connection)
+
+        # Search index setup
+        print("Setting up search index...")
+        index_client = SearchIndexClient(endpoint=vector_store_address, credential=AZURE_COGNITIVE_SEARCH_CREDENTIAL)
+        fields = [
+            SearchField(name="parent_id", type=SearchFieldDataType.String, sortable=True, filterable=True, facetable=True),
+            SearchField(name="title", type=SearchFieldDataType.String),
+            SearchField(name="chunk_id", type=SearchFieldDataType.String, key=True, sortable=True, filterable=True, facetable=True, analyzer_name="keyword"),
+            SearchField(name="content", type=SearchFieldDataType.String, sortable=False, filterable=False, facetable=False),
+            SearchField(name="vector", type=SearchFieldDataType.Collection(SearchFieldDataType.Single), vector_search_dimensions=1536, vector_search_profile_name="myHnswProfile"),
+        ]
+
+        vector_search = VectorSearch(
+            algorithms=[
+                HnswAlgorithmConfiguration(
+                    name="myHnsw",  # Ensure this is a string
+                    parameters=HnswParameters(
+                        m=4,
+                        ef_construction=400,
+                        ef_search=1000,
+                        metric=VectorSearchAlgorithmMetric.COSINE,
+                    ),
+                ),
+            ],
+            profiles=[
+                VectorSearchProfile(
+                    name="myHnswProfile",  # Ensure this is a string
+                    algorithm_configuration_name="myHnsw",  # Ensure this is a string
+                    vectorizer="myOpenAI",  # Ensure this is a string
+                ),
+            ],
+            vectorizers=[
+                AzureOpenAIVectorizer(
+                    name="myOpenAI",  # Ensure this is a string
+                    kind="azureOpenAI",
+                    azure_open_ai_parameters=AzureOpenAIParameters(
+                        resource_uri=azure_openai_api_base,
+                        deployment_id=model,
+                        api_key=azure_openai_api_key,
+                    ),
+                ),
+            ],
+        )
+
+        semantic_config = SemanticConfiguration(
+            name="my-semantic-config",
+            prioritized_fields=SemanticPrioritizedFields(
+                title_field=SemanticField(field_name="title"),
+                content_fields=[SemanticField(field_name="content")]
+            ),
+        )
+
+        semantic_search = SemanticSearch(configurations=[semantic_config])
+
+        index = SearchIndex(name=index_name, fields=fields, vector_search=vector_search, semantic_search=semantic_search)
+        print(f"Creating or updating index: {index_name}")
+        index_client.create_or_update_index(index)
+
+        # Skillset setup
+        skillset_name = f"{index_name}-skillset"
+        print(f"Setting up skillset: {skillset_name}")
+        split_skill = SplitSkill(
+            description="Split skill to chunk documents",
+            text_split_mode="pages",
+            context="/document",
+            maximum_page_length=2000,
+            page_overlap_length=500,
+            inputs=[InputFieldMappingEntry(name="text", source="/document/content")],
+            outputs=[OutputFieldMappingEntry(name="textItems", target_name="pages")],
+        )
+
+        embedding_skill = AzureOpenAIEmbeddingSkill(
+            description="Skill to generate embeddings via Azure OpenAI",
+            context="/document/pages/*",
+            resource_uri=azure_openai_api_base,
+            deployment_id=model,
+            api_key=azure_openai_api_key,
+            inputs=[InputFieldMappingEntry(name="text", source="/document/pages/*")],
+            outputs=[OutputFieldMappingEntry(name="embedding", target_name="vector")],
+        )
+
+        skillset = SearchIndexerSkillset(
+            name=skillset_name,
+            description="Skillset to chunk documents and generate embeddings",
+            skills=[split_skill, embedding_skill]
+        )
+        client = SearchIndexerClient(endpoint=vector_store_address, credential=AZURE_COGNITIVE_SEARCH_CREDENTIAL)
+        client.create_or_update_skillset(skillset)
+
+        # Indexer setup
+        indexer_name = f"{index_name}-indexer"
+        print(f"Setting up indexer: {indexer_name}")
+        indexer = SearchIndexer(
+            name=indexer_name,
+            description="Indexer to index documents and generate embeddings",
+            skillset_name=skillset_name,
+            target_index_name=index_name,
+            data_source_name=data_source_connection.name,
+            field_mappings=[FieldMapping(source_field_name="metadata_storage_name", target_field_name="title")]
+        )
+
+        indexer_client.create_or_update_indexer(indexer)
+        indexer_client.run_indexer(indexer_name)
+        print("Indexer run complete")
+
+    except ValueError as e:
+        print(f"ValueError: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"ValueError: {str(e)}")
+    except Exception as e:
+        print(f"Error during index creation: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Something went wrong! {str(e)}")
+
+    return {"success": True, "message": "Index created successfully", "index_name": index_name}
